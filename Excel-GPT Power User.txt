@@ -1,0 +1,596 @@
+Option Explicit
+
+' Constants for API endpoint and request properties
+Const API_ENDPOINT As String = "https://api.openai.com/v1/completions"
+Const MODEL As String = "text-davinci-003"
+Const MAX_TOKENS As Long = 1024
+Const TEMPERATURE As Single = 0.5
+
+' Output worksheet name
+Const OUTPUT_WORKSHEET_DEFAULT As String = "Result"
+
+' Shortcut key
+Const MACRO_SHORTCUT As String = "^+O" ' Ctrl+Shift+O
+
+' API Keys sheet name
+Const API_KEYS_SHEET As String = "API Keys"
+
+Sub OpenAI_Completion()
+    #If Mac Then
+        MsgBox "This macro only works on Windows. It is not compatible with macOS.", vbOKOnly, "Windows Compatibility Only"
+        Exit Sub
+    #End If
+    
+    On Error GoTo ErrorHandler
+    Application.ScreenUpdating = False
+    
+    ' Get API key
+    Dim apiKey As String
+    apiKey = GetAPIKey()
+    
+    ' Check if API key is available
+    If Not IsValidAPIKey(apiKey) Then
+        MsgBox "Please input a valid API key. You can get one from https://openai.com/api/", vbCritical, "Invalid API Key"
+        Application.ScreenUpdating = True
+        Exit Sub
+    End If
+    
+    ' Select input range if no cells are manually selected
+    If TypeName(Selection) <> "Range" Then
+        Dim selectedRange As Range
+        Set selectedRange = GetContiguousTextRange()
+        If selectedRange Is Nothing Then
+            MsgBox "No valid input range selected.", vbCritical, "Invalid Input"
+            Application.ScreenUpdating = True
+            Exit Sub
+        End If
+        selectedRange.Select
+    End If
+    
+    ' Get the prompt
+    Dim prompt As String
+    Dim cell As Range
+    Dim selectedRange As Range
+    Set selectedRange = Selection
+    
+    ' Check if there is any selected cell
+    If selectedRange Is Nothing Then
+        MsgBox "Please select a range of cells to use as input.", vbCritical, "No Input Selected"
+        Application.ScreenUpdating = True
+        Exit Sub
+    End If
+    
+    ' Check if there is anything in the selected cell
+    For Each cell In selectedRange
+        If Trim(cell.Value) <> "" Then
+            prompt = prompt & cell.Value & " "
+        End If
+    Next cell
+    
+    ' Detect the input modality
+    Dim inputModality As String
+    inputModality = DetectInputModality()
+    
+    ' Generate the multimodal prompt
+    Dim multimodalPrompt As String
+    multimodalPrompt = GenerateMultimodalPrompt(prompt, inputModality)
+    
+    ' Call OpenAI API with the multimodal prompt
+    Dim completionText As String
+    completionText = CallOpenAIAPI(multimodalPrompt)
+    
+    ' Translate the prompt to the target language
+    Dim targetLanguage As String
+    targetLanguage = "fr" ' Replace with your desired target language code
+    
+    Dim translatedPrompt As String
+    translatedPrompt = TranslateText(prompt, targetLanguage)
+    
+    ' Check if prompt is empty
+    If Trim(prompt) = "" Then
+        MsgBox "Please enter some text in the selected cells before executing the macro.", vbCritical, "Empty Input"
+        Application.ScreenUpdating = True
+        Exit Sub
+    End If
+    
+    ' Clear the input range
+    selectedRange.ClearContents
+    
+    ' Clean prompt to avoid parsing error in JSON payload
+    prompt = CleanJSONString(prompt)
+
+' Check input length
+If Len(prompt) > MAX_TOKENS Then
+    MsgBox "Input exceeds the maximum token limit. Please reduce the length of the input.", vbCritical, "Input Too Long"
+    Application.ScreenUpdating = True
+    Exit Sub
+End If
+
+' Create worksheet if it does not exist
+Dim outputWorksheet As Worksheet
+Set outputWorksheet = GetOrCreateOutputWorksheet()
+
+' Show progress indicator in the status bar
+Dim totalCells As Long
+totalCells = selectedRange.Cells.Count
+Application.StatusBar = "Processing OpenAI request... 0%"
+
+' Create XMLHTTP object
+Dim httpRequest As Object
+Set httpRequest = CreateObject("MSXML2.XMLHTTP")
+
+' Define request body
+Dim requestBody As String
+requestBody = "{" & _
+                """model"": """ & MODEL & """," & _
+                """prompt"": """ & prompt & """," & _
+                """max_tokens"": " & MAX_TOKENS & "," & _
+                """temperature"": " & TEMPERATURE & _
+            "}"
+
+' Variables for progress tracking
+Dim processedCells As Long
+Dim progressPercentage As Double
+
+' Process each cell in the selected range
+For Each cell In selectedRange
+    ' Update progress
+    processedCells = processedCells + 1
+    progressPercentage = (processedCells / totalCells) * 100
+    Application.StatusBar = "Processing OpenAI request... " & Format(progressPercentage, "0.00") & "%"
+    
+    ' Send the HTTP request
+    With httpRequest
+        .Open "POST", API_ENDPOINT, False
+        .SetRequestHeader "Content-Type", "application/json"
+        .SetRequestHeader "Authorization", "Bearer " & apiKey
+        .send (requestBody)
+    End With
+    
+    ' Check if the request is successful
+    If httpRequest.Status = 200 Then
+        ' Parse the JSON response
+        Dim response As String
+        response = httpRequest.responseText
+        
+        ' Get the completion and clean it up
+        Dim completion As String
+        completion = ParseResponse(response)
+        
+        ' Write the completion to the corresponding cell in the output worksheet
+        outputWorksheet.Cells(cell.Row, cell.Column).Value = ReplaceBackslash(completion)
+        
+        ' Preserve formatting from the input cell to the output cell
+        cell.Copy
+        outputWorksheet.Cells(cell.Row, cell.Column).PasteSpecial Paste:=xlPasteFormats
+        Application.CutCopyMode = False
+        
+    Else
+        MsgBox "Request failed with status " & httpRequest.Status & vbCrLf & vbCrLf & "ERROR MESSAGE:" & vbCrLf & httpRequest.responseText, vbCritical, "OpenAI Request Failed"
+        Exit Sub
+    End If
+Next cell
+
+' Show completion message
+MsgBox "OpenAI completion request processed successfully. Results appended to the '" & outputWorksheet.Name & "' worksheet.", vbInformation, "OpenAI Request Completed"
+
+' Activate & color result worksheet
+With outputWorksheet
+    .Activate
+    .Range("A1").Select
+    .Tab.Color = RGB(169, 208, 142)
+End With
+
+' Save results to a specified file path
+AutoSaveResults outputWorksheet
+
+' Update results summary
+UpdateResultsSummary outputWorksheet, totalCells, processedCells
+
+Application.StatusBar = False
+Application.ScreenUpdating = True
+
+Exit Sub
+ErrorHandler:
+MsgBox "Error " & Err.number & ": " & Err.Description & vbCrLf & "Line: " & Erl, vbCritical, "Error"
+Application.StatusBar = False
+Application.ScreenUpdating = True
+End Sub
+
+' Function to detect the input modality (text, image, audio)
+Function DetectInputModality() As String
+' Implement the logic to detect the input modality based on the content provided by the user
+' You can use techniques such as file extension checking, image analysis, or audio analysis
+' Return the detected input modality ("text", "image", "audio")
+' Example implementation for detecting text input:
+DetectInputModality = "text"
+End Function
+
+' Function to generate the multimodal prompt based on the detected input modality
+Function GenerateMultimodalPrompt(ByVal prompt As String, ByVal inputModality As String) As String
+' Implement the logic to generate the multimodal prompt
+' Include the relevant text, image text, and audio text in the prompt based on the detected input modality
+' Return the constructed multimodal prompt
+
+' Example implementation for text input:
+GenerateMultimodalPrompt = prompt
+End Function
+
+' Function to call the OpenAI API with the multimodal prompt
+Function CallOpenAIAPI(ByVal multimodalPrompt As String) As String
+' Modify the OpenAI API request payload to include the multimodal prompt
+' Call the OpenAI API with the modified payload and retrieve the completion response
+' Parse the API response and extract the completion text
+' Return the completion text
+
+' Example implementation:
+' You need to implement the logic for making an HTTP request to the OpenAI API
+' and handling the API response to extract the completion text.
+' You can use XMLHTTP or other suitable libraries for making the request.
+' The exact implementation will depend on the API specifications and the response format.
+' Here's a simplified example without the actual HTTP request:
+
+' Dim completionText As String
+' completionText = "Sample completion text from OpenAI API"
+' CallOpenAIAPI = completionText
+End Function
+
+' Helper function to check if worksheet exists
+Function WorksheetExists(worksheetName As String) As Boolean
+On Error Resume Next
+WorksheetExists = (Not (Sheets(worksheetName) Is Nothing))
+On Error GoTo 0
+End Function
+
+' Helper function to parse the response text
+Function ParseResponse(ByVal response As String) As String
+On Error Resume Next
+Dim startIndex As Long
+startIndex = InStr(response, """text"":""") + 8
+Dim endIndex As Long
+endIndex = InStr(response, """index"":") - 2
+ParseResponse = Mid(response, startIndex, endIndex - startIndex)
+On Error GoTo 0
+End Function
+
+' Helper function to clean text
+Function CleanJSONString(inputStr As String) As String
+On Error Resume Next
+' Remove line breaks
+CleanJSONString = Replace(inputStr, vbCrLf, "")
+CleanJSONString = Replace(CleanJSONString, vbCr, "")
+CleanJSONString = Replace(CleanJSONString, vbLf, "")
+
+' Preserve emojis
+Dim char As String
+Dim cleanStr As String
+cleanStr = ""
+
+For i = 1 To Len(inputStr)
+    char = Mid(inputStr, i, 1)
+    If AscW(char) > 255 Then
+        cleanStr = cleanStr & char
+    End If
+Next i
+
+CleanJSONString = cleanStr
+
+' Replace all double quotes with single quotes
+CleanJSONString = Replace(CleanJSONString, """", "'")
+On Error GoTo 0
+End Function
+
+' Replaces the backslash character only if it is immediately followed by a double quote.
+Function ReplaceBackslash(text As Variant) As String
+On Error Resume Next
+ReplaceBackslash = Replace(text, "", "")
+End Function
+
+' Helper function to get or create the output worksheet
+Function GetOrCreateOutputWorksheet() As Worksheet
+Dim outputWorksheet As Worksheet
+On Error Resume Next
+Set outputWorksheet = Worksheets(OUTPUT_WORKSHEET_DEFAULT)
+On Error GoTo 0
+
+If outputWorksheet Is Nothing Then
+    ' Create a new worksheet
+    Set outputWorksheet = Worksheets.Add(After:=Sheets(Sheets.Count))
+    outputWorksheet.Name = OUTPUT_WORKSHEET_DEFAULT
+End If
+
+Set GetOrCreateOutputWorksheet = outputWorksheet
+End Function
+
+' Helper function to auto-save results to a specified file path
+Sub AutoSaveResults(ByVal outputWorksheet As Worksheet)
+Dim filePath As Variant
+filePath = Application.GetSaveAsFilename(InitialFileName:="Output", fileFilter:="Excel Files (*.xlsx), *.xlsx")
+
+If filePath <> "False" Then
+    outputWorksheet.Copy
+    ' Save the copied worksheet to the specified file path
+    With ActiveWorkbook
+        .SaveAs Filename:=filePath, FileFormat:=xlOpenXMLWorkbook
+        .Close SaveChanges:=False
+    End With
+End If
+End Sub
+
+' Helper function to update the results summary in the output worksheet
+Sub UpdateResultsSummary(ByVal outputWorksheet As Worksheet, ByVal totalCells As Long, ByVal processedCells As Long)
+Dim summarySheet As Worksheet
+On Error Resume Next
+Set summarySheet = Worksheets("Summary")
+On Error GoTo 0
+
+If summarySheet Is Nothing Then
+    Set summarySheet = Worksheets.Add(After:=Sheets(Sheets.Count))
+    summarySheet.Name = "Summary"
+End If
+
+' Update results summary
+summarySheet.Cells.ClearContents
+summarySheet.Range("A1").Value = "Results Summary"
+summarySheet.Range("A2").Value = "Total Cells Processed"
+summarySheet.Range("B2").Value = totalCells
+summarySheet.Range("A3").Value = "Successful Completions"
+summarySheet.Range("B3").Value = processedCells
+summarySheet.Range("A4").Value = "Cells with Errors"
+summarySheet.Range("B4").Formula = "=B2-B3"
+
+' Format results summary
+With summarySheet.Range("A1:B4")
+    .Font.Bold = True
+    .Columns.AutoFit
+    .HorizontalAlignment = xlCenter
+End With
+
+' Move the summary sheet to the leftmost position
+summarySheet.Move Before:=Sheets(1)
+End Sub
+
+' Helper function to translate text using a translation API
+Function TranslateText(ByVal text As String, ByVal targetLanguage As String) As String
+' Implement the logic to translate text using the desired translation API
+' You need to provide the necessary details for the translation API, such as API endpoint, API key, etc.
+' Make an HTTP request to the translation API and handle the response to retrieve the translated text
+' Return the translated text
+
+' Example implementation:
+' Dim translatedText As String
+' translatedText = "Translated text"
+' TranslateText = translatedText
+End Function
+
+' Helper function to get the API key from the API Keys sheet
+Function GetAPIKey() As String
+Dim apiKey As String
+apiKey = WorksheetFunction.VLookup("OpenAI", Worksheets(API_KEYS_SHEET).Range("A:B"), 2, False)
+GetAPIKey = apiKey
+End Function
+
+' Helper function to check if the API key is valid
+Function IsValidAPIKey(ByVal apiKey As String) As Boolean
+' Implement the logic to check if the API key is valid' You can implement the necessary checks to validate the API key
+' For example, you can check if the API key is not empty and meets certain criteria
+' Return True if the API key is valid, False otherwise
+
+' Example implementation:
+' IsValidAPIKey = (Len(apiKey) > 0) ' Basic check for non-empty API key
+
+IsValidAPIKey = (Len(apiKey) > 0) ' Update with your validation logic
+End Function
+
+' Helper function to get the contiguous range of cells containing text
+Function GetContiguousTextRange() As Range
+Dim selectedRange As Range
+Set selectedRange = Selection
+
+' Find the first cell in the selected range with non-empty text
+Dim firstCell As Range
+Set firstCell = selectedRange.Cells.Find(What:="*", LookIn:=xlValues, LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlNext, MatchCase:=False)
+
+' Check if a cell with text is found
+If firstCell Is Nothing Then
+    Set GetContiguousTextRange = Nothing
+    Exit Function
+End If
+
+' Find the last cell in the selected range with non-empty text
+Dim lastCell As Range
+Set lastCell = selectedRange.Cells.Find(What:="*", LookIn:=xlValues, LookAt:=xlPart, SearchOrder:=xlByRows, SearchDirection:=xlPrevious, MatchCase:=False)
+
+' Return the range containing all cells between the first and last cell with non-empty text
+Set GetContiguousTextRange = selectedRange.Parent.Range(firstCell, lastCell)
+End Function
+
+' Main subroutine to initialize the macro and assign the shortcut key
+Sub InitializeMacro()
+' Assign the macro to the shortcut key
+AssignMacroShortcut
+End Sub
+
+' Assign shortcut key to the macro
+Sub AssignMacroShortcut()
+Application.OnKey MACRO_SHORTCUT, "OpenAI_Completion"
+End Sub
+
+' Run the InitializeMacro subroutine when the workbook opens
+Private Sub Workbook_Open()
+InitializeMacro
+End Sub
+
+' Encode special characters in a JSON string
+Function CleanJSONString(ByVal jsonString As String) As String
+jsonString = Replace(jsonString, "", "\")
+jsonString = Replace(jsonString, """", """")
+jsonString = Replace(jsonString, vbCrLf, "\n")
+jsonString = Replace(jsonString, vbTab, "\t")
+jsonString = Replace(jsonString, "\f", "\f")
+jsonString = Replace(jsonString, "\b", "\b")
+jsonString = Replace(jsonString, "\r", "\r")
+jsonString = Replace(jsonString, "/", "/")
+CleanJSONString = jsonString
+End Function
+
+' Escape reserved characters in a JSON string
+Function EscapeReservedCharacters(ByVal jsonString As String) As String
+jsonString = Replace(jsonString, "", "\")
+jsonString = Replace(jsonString, """", """")
+jsonString = Replace(jsonString, "/", "/")
+jsonString = Replace(jsonString, vbTab, "\t")
+jsonString = Replace(jsonString, vbCr, "\r")
+jsonString = Replace(jsonString, vbLf, "\n")
+jsonString = Replace(jsonString, Chr(8), "\b")
+jsonString = Replace(jsonString, Chr(12), "\f")
+EscapeReservedCharacters = jsonString
+End Function
+
+' Remove line breaks from a string
+Function RemoveLineBreaks(ByVal inputString As String) As String
+inputString = Replace(inputString, vbCrLf, " ")
+inputString = Replace(inputString, vbCr, " ")
+inputString = Replace(inputString, vbLf, " ")
+RemoveLineBreaks = inputString
+End Function
+
+' Remove trailing spaces from a Function RemoveTrailingSpaces(ByVal inputString As String) As String
+RemoveTrailingSpaces = Trim(inputString)
+End Function
+
+' Remove leading spaces from a string
+Function RemoveLeadingSpaces(ByVal inputString As String) As String
+Dim startIndex As Long
+Dim endIndex As Long
+Dim trimmedString As String
+
+startIndex = 1
+endIndex = Len(inputString)
+
+While startIndex <= endIndex And Mid(inputString, startIndex, 1) = " "
+    startIndex = startIndex + 1
+Wend
+
+If startIndex <= endIndex Then
+    trimmedString = Mid(inputString, startIndex, endIndex - startIndex + 1)
+End If
+
+RemoveLeadingSpaces = trimmedString
+End Function
+
+' Remove leading and trailing spaces from a string
+Function RemoveLeadingAndTrailingSpaces(ByVal inputString As String) As String
+RemoveLeadingAndTrailingSpaces = Trim(inputString)
+End Function
+
+' Clean the prompt to avoid parsing errors in JSON payload
+Function CleanPrompt(ByVal prompt As String) As String
+' Implement any specific cleaning operations to handle special characters or formatting in the prompt
+' Return the cleaned prompt
+
+' Example implementation:
+' Remove any line breaks from the prompt
+prompt = RemoveLineBreaks(prompt)
+
+' Remove any trailing spaces from the prompt
+prompt = RemoveTrailingSpaces(prompt)
+
+' Remove any leading spaces from the prompt
+prompt = RemoveLeadingSpaces(prompt)
+
+CleanPrompt = prompt
+End Function
+
+' Import required library reference to enable HTTP requests
+#If VBA7 Then
+' For 64-bit Excel
+Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As LongPtr)
+#Else
+' For 32-bit Excel
+Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+#End If
+
+' Import required library reference to enable JSON parsing
+#If VBA7 Then
+' For 64-bit Excel
+Private Declare PtrSafe Function GetProcAddress Lib "kernel32" (ByVal hModule As LongPtr, ByVal lpProcName As String) As LongPtr
+Private Declare PtrSafe Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As LongPtr
+Private Declare PtrSafe Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As LongPtr
+#Else
+' For 32-bit Excel
+Private Declare Function GetProcAddress Lib "kernel32" (ByVal hModule As Long, ByVal lpProcName As String) As Long
+Private Declare Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As Long
+Private Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As Long
+#End If
+
+' Check if JSONConverter library is available
+Function IsJSONConverterAvailable() As Boolean
+Dim libHandle As LongPtr
+Dim funcAddr As LongPtr
+
+libHandle = LoadLibrary("JSONConverter.dll")
+funcAddr = GetProcAddress(libHandle, "InitJSONConverter")
+
+If funcAddr <> 0 Then
+    IsJSONConverterAvailable = True
+Else
+    IsJSONConverterAvailable = False
+End If
+End Function
+
+' Main subroutine to check JSONConverter availability and run the OpenAI_Completion macro
+Sub RunOpenAI_Completion()
+If Not IsJSONConverterAvailable() Then
+MsgBox "The required JSONConverter library is not available. Please make sure the library is properly installed.", vbCritical, "Library NotAvailable"
+Exit Sub
+End If
+
+OpenAI_Completion
+End Sub
+
+' Check if the required libraries and references are available
+Function CheckRequiredLibraries() As Boolean
+' Check if JSONConverter library is available
+Dim jsonConverterAvailable As Boolean
+jsonConverterAvailable = IsJSONConverterAvailable()
+
+' Check if Microsoft XML v6.0 reference is available
+Dim xmlReferenceAvailable As Boolean
+xmlReferenceAvailable = CheckXMLReference()
+
+' Return True if both libraries are available, False otherwise
+CheckRequiredLibraries = jsonConverterAvailable And xmlReferenceAvailable
+End Function
+
+' Check if Microsoft XML v6.0 reference is available
+Function CheckXMLReference() As Boolean
+Dim ref As Reference
+
+For Each ref In Application.References
+    If ref.Name = "Microsoft XML, v6.0" Then
+        CheckXMLReference = True
+        Exit Function
+    End If
+Next ref
+
+CheckXMLReference = False
+End Function
+
+' Main subroutine to check the availability of required libraries and run the OpenAI_Completion macro
+Sub RunOpenAI_Completion()
+' Check if the required libraries and references are available
+If Not CheckRequiredLibraries() Then
+MsgBox "The required libraries are not available. Please make sure the JSONConverter library and Microsoft XML, v6.0 reference are properly installed.", vbCritical, "Libraries Not Available"
+Exit Sub
+End If
+
+' Run the OpenAI_Completion macro
+OpenAI_Completion
+End Sub
+
+' Run the RunOpenAI_Completion subroutine when the workbook opens
+Private Sub Workbook_Open()
+RunOpenAI_Completion
+End Sub
+
