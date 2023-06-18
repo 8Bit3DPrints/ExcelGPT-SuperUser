@@ -15,6 +15,10 @@ Const MACRO_SHORTCUT As String = "^+O" ' Ctrl+Shift+O
 ' API Keys sheet name
 Const API_KEYS_SHEET As String = "API Keys"
 
+Private Sub CommandButton1_Click()
+    OpenAI_Completion
+End Sub
+
 Sub OpenAI_Completion()
     #If Mac Then
         MsgBox "This macro only works on Windows. It is not compatible with macOS.", vbOKOnly, "Windows Compatibility Only"
@@ -23,6 +27,10 @@ Sub OpenAI_Completion()
     
     On Error GoTo ErrorHandler
     Application.ScreenUpdating = False
+    
+    Dim json As Object
+    json = JsonConverter.ParseJson("{""key"": ""value""}")
+    Debug.Print json("key")  ' Prints: value
     
     ' Get API key
     Dim apiKey As String
@@ -50,7 +58,6 @@ Sub OpenAI_Completion()
     ' Get the prompt
     Dim prompt As String
     Dim cell As Range
-    Dim selectedRange As Range
     Set selectedRange = Selection
     
     ' Check if there is any selected cell
@@ -144,7 +151,7 @@ For Each cell In selectedRange
         .Open "POST", API_ENDPOINT, False
         .SetRequestHeader "Content-Type", "application/json"
         .SetRequestHeader "Authorization", "Bearer " & apiKey
-        .send (requestBody)
+        .Send (requestBody)
     End With
     
     ' Check if the request is successful
@@ -192,9 +199,9 @@ Application.ScreenUpdating = True
 
 Exit Sub
 ErrorHandler:
-MsgBox "Error " & Err.number & ": " & Err.Description & vbCrLf & "Line: " & Erl, vbCritical, "Error"
-Application.StatusBar = False
-Application.ScreenUpdating = True
+    MsgBox "Error " & Err.number & ": " & Err.Description & vbCrLf & "Line: " & Erl, vbCritical, "Error in OpenAI_Completion subroutine"
+    Application.StatusBar = False
+    Application.ScreenUpdating = True
 End Sub
 
 ' Function to detect the input modality (text, image, audio)
@@ -244,41 +251,48 @@ End Function
 
 ' Helper function to parse the response text
 Function ParseResponse(ByVal response As String) As String
-On Error Resume Next
-Dim startIndex As Long
-startIndex = InStr(response, """text"":""") + 8
-Dim endIndex As Long
-endIndex = InStr(response, """index"":") - 2
-ParseResponse = Mid(response, startIndex, endIndex - startIndex)
-On Error GoTo 0
+    ' Use a JSON parsing library to parse the response
+    ' Note: This requires adding a reference to the library in your VBA project
+    Dim jsonResponse As Object
+    Set jsonResponse = JsonConverter.ParseJson(response)
+    
+    ' Adjust this line to match the structure of your JSON response
+    ParseResponse = jsonResponse("choices")(1)("text")
 End Function
 
-' Helper function to clean text
-Function CleanJSONString(inputStr As String) As String
-On Error Resume Next
-' Remove line breaks
-CleanJSONString = Replace(inputStr, vbCrLf, "")
-CleanJSONString = Replace(CleanJSONString, vbCr, "")
-CleanJSONString = Replace(CleanJSONString, vbLf, "")
-
-' Preserve emojis
-Dim char As String
-Dim cleanStr As String
-cleanStr = ""
-
-For i = 1 To Len(inputStr)
-    char = Mid(inputStr, i, 1)
-    If AscW(char) > 255 Then
-        cleanStr = cleanStr & char
-    End If
-Next i
-
-CleanJSONString = cleanStr
-
-' Replace all double quotes with single quotes
-CleanJSONString = Replace(CleanJSONString, """", "'")
-On Error GoTo 0
+' Helper function to clean a JSON string
+Function CleanJSONString(ByVal inputStr As String) As String
+    Dim jsonString As String
+    Dim cleanStr As String
+    Dim char As String
+    Dim i As Long
+    
+    ' Remove any line breaks from the string
+    jsonString = RemoveLineBreaks(inputStr)
+    
+    ' Escape reserved characters
+    jsonString = Replace(jsonString, "\", "\\")
+    jsonString = Replace(jsonString, """", "\""")
+    jsonString = Replace(jsonString, "/", "\/")
+    jsonString = Replace(jsonString, vbBack, "\b")
+    jsonString = Replace(jsonString, vbFormFeed, "\f")
+    jsonString = Replace(jsonString, vbTab, "\t")
+    
+    ' Preserve emojis
+    cleanStr = ""
+    For i = 1 To Len(jsonString)
+        char = Mid(jsonString, i, 1)
+        If AscW(char) > 255 Then
+            cleanStr = cleanStr & char
+        End If
+    Next i
+    
+    ' Replace all double quotes with single quotes
+    cleanStr = Replace(cleanStr, """", "'")
+    
+    CleanJSONString = cleanStr
 End Function
+
 
 ' Replaces the backslash character only if it is immediately followed by a double quote.
 Function ReplaceBackslash(text As Variant) As String
@@ -350,17 +364,11 @@ End With
 summarySheet.Move Before:=Sheets(1)
 End Sub
 
-' Helper function to translate text using a translation API
+' Translate the generated text
+' Note: This function is not fully implemented and requires access to a translation API
 Function TranslateText(ByVal text As String, ByVal targetLanguage As String) As String
-' Implement the logic to translate text using the desired translation API
-' You need to provide the necessary details for the translation API, such as API endpoint, API key, etc.
-' Make an HTTP request to the translation API and handle the response to retrieve the translated text
-' Return the translated text
-
-' Example implementation:
-' Dim translatedText As String
-' translatedText = "Translated text"
-' TranslateText = translatedText
+    ' TODO: Implement translation functionality
+    TranslateText = text
 End Function
 
 ' Helper function to get the API key from the API Keys sheet
@@ -372,14 +380,22 @@ End Function
 
 ' Helper function to check if the API key is valid
 Function IsValidAPIKey(ByVal apiKey As String) As Boolean
-' Implement the logic to check if the API key is valid' You can implement the necessary checks to validate the API key
-' For example, you can check if the API key is not empty and meets certain criteria
-' Return True if the API key is valid, False otherwise
+    ' Basic check for non-empty API key
+    If Len(apiKey) <= 0 Then
+        IsValidAPIKey = False
+        Exit Function
+    End If
 
-' Example implementation:
-' IsValidAPIKey = (Len(apiKey) > 0) ' Basic check for non-empty API key
-
-IsValidAPIKey = (Len(apiKey) > 0) ' Update with your validation logic
+    ' Add a test request to the OpenAI API to validate the API key
+    ' Note: You'll need to replace the API_ENDPOINT and MODEL constants with the actual values
+    Dim httpRequest As Object
+    Set httpRequest = CreateObject("MSXML2.XMLHTTP")
+    With httpRequest
+        .Open "GET", API_ENDPOINT & "/models/" & MODEL, False
+        .SetRequestHeader "Authorization", "Bearer " & apiKey
+        .Send
+    End With
+    IsValidAPIKey = (httpRequest.Status = 200)
 End Function
 
 ' Helper function to get the contiguous range of cells containing text
@@ -416,24 +432,6 @@ Sub AssignMacroShortcut()
 Application.OnKey MACRO_SHORTCUT, "OpenAI_Completion"
 End Sub
 
-' Run the InitializeMacro subroutine when the workbook opens
-Private Sub Workbook_Open()
-InitializeMacro
-End Sub
-
-' Encode special characters in a JSON string
-Function CleanJSONString(ByVal jsonString As String) As String
-jsonString = Replace(jsonString, "", "\")
-jsonString = Replace(jsonString, """", """")
-jsonString = Replace(jsonString, vbCrLf, "\n")
-jsonString = Replace(jsonString, vbTab, "\t")
-jsonString = Replace(jsonString, "\f", "\f")
-jsonString = Replace(jsonString, "\b", "\b")
-jsonString = Replace(jsonString, "\r", "\r")
-jsonString = Replace(jsonString, "/", "/")
-CleanJSONString = jsonString
-End Function
-
 ' Escape reserved characters in a JSON string
 Function EscapeReservedCharacters(ByVal jsonString As String) As String
 jsonString = Replace(jsonString, "", "\")
@@ -447,17 +445,19 @@ jsonString = Replace(jsonString, Chr(12), "\f")
 EscapeReservedCharacters = jsonString
 End Function
 
-' Remove line breaks from a string
+' Helper function to remove line breaks from a string
 Function RemoveLineBreaks(ByVal inputString As String) As String
-inputString = Replace(inputString, vbCrLf, " ")
-inputString = Replace(inputString, vbCr, " ")
-inputString = Replace(inputString, vbLf, " ")
-RemoveLineBreaks = inputString
+    inputString = Replace(inputString, vbCrLf, " ")
+    inputString = Replace(inputString, vbCr, " ")
+    inputString = Replace(inputString, vbLf, " ")
+    RemoveLineBreaks = inputString
 End Function
 
-' Remove trailing spaces from a Function RemoveTrailingSpaces(ByVal inputString As String) As String
-RemoveTrailingSpaces = Trim(inputString)
+' Remove trailing spaces from a string
+Function RemoveTrailingSpaces(ByVal inputString As String) As String
+    RemoveTrailingSpaces = Trim(inputString)
 End Function
+
 
 ' Remove leading spaces from a string
 Function RemoveLeadingSpaces(ByVal inputString As String) As String
@@ -486,68 +486,60 @@ End Function
 
 ' Clean the prompt to avoid parsing errors in JSON payload
 Function CleanPrompt(ByVal prompt As String) As String
-' Implement any specific cleaning operations to handle special characters or formatting in the prompt
-' Return the cleaned prompt
+    ' Remove any line breaks from the prompt
+    prompt = RemoveLineBreaks(prompt)
 
-' Example implementation:
-' Remove any line breaks from the prompt
-prompt = RemoveLineBreaks(prompt)
+    ' Remove any trailing spaces from the prompt
+    prompt = RemoveTrailingSpaces(prompt)
 
-' Remove any trailing spaces from the prompt
-prompt = RemoveTrailingSpaces(prompt)
+    ' Remove any leading spaces from the prompt
+    prompt = RemoveLeadingSpaces(prompt)
 
-' Remove any leading spaces from the prompt
-prompt = RemoveLeadingSpaces(prompt)
-
-CleanPrompt = prompt
+    CleanPrompt = prompt
 End Function
 
 ' Import required library reference to enable HTTP requests
-#If VBA7 Then
+'#If VBA7 Then
 ' For 64-bit Excel
-Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As LongPtr)
-#Else
+'    Declare PtrSafe Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As LongPtr)
+'#Else
 ' For 32-bit Excel
-Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
-#End If
-
+'    Declare Sub Sleep Lib "kernel32" (ByVal dwMilliseconds As Long)
+'#End If
+'
 ' Import required library reference to enable JSON parsing
-#If VBA7 Then
+'#If VBA7 Then
 ' For 64-bit Excel
-Private Declare PtrSafe Function GetProcAddress Lib "kernel32" (ByVal hModule As LongPtr, ByVal lpProcName As String) As LongPtr
-Private Declare PtrSafe Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As LongPtr
-Private Declare PtrSafe Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As LongPtr
-#Else
+'Private Declare PtrSafe Function GetProcAddress Lib "kernel32" (ByVal hModule As LongPtr, ByVal lpProcName As String) As LongPtr
+'Private Declare PtrSafe Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As LongPtr
+'Private Declare PtrSafe Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As LongPtr
+'#Else
 ' For 32-bit Excel
-Private Declare Function GetProcAddress Lib "kernel32" (ByVal hModule As Long, ByVal lpProcName As String) As Long
-Private Declare Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As Long
-Private Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As Long
-#End If
+'Private Declare Function GetProcAddress Lib "kernel32" (ByVal hModule As Long, ByVal lpProcName As String) As Long
+'Private Declare Function GetModuleHandle Lib "kernel32" Alias "GetModuleHandleA" (ByVal lpModuleName As String) As Long
+'Private Declare Function LoadLibrary Lib "kernel32" Alias "LoadLibraryA" (ByVal lpLibFileName As String) As Long
+'#End If
 
-' Check if JSONConverter library is available
-Function IsJSONConverterAvailable() As Boolean
-Dim libHandle As LongPtr
-Dim funcAddr As LongPtr
 
-libHandle = LoadLibrary("JSONConverter.dll")
-funcAddr = GetProcAddress(libHandle, "InitJSONConverter")
 
-If funcAddr <> 0 Then
-    IsJSONConverterAvailable = True
-Else
-    IsJSONConverterAvailable = False
-End If
-End Function
-
-' Main subroutine to check JSONConverter availability and run the OpenAI_Completion macro
+' Main subroutine to check the availability of required libraries and run the OpenAI_Completion macro
 Sub RunOpenAI_Completion()
-If Not IsJSONConverterAvailable() Then
-MsgBox "The required JSONConverter library is not available. Please make sure the library is properly installed.", vbCritical, "Library NotAvailable"
-Exit Sub
-End If
+    ' Check if the required JSONConverter library is available
+    If Not IsJSONConverterAvailable() Then
+        MsgBox "The required JSONConverter library is not available. Please make sure the library is properly installed.", vbCritical, "Library Not Available"
+        Exit Sub
+    End If
 
-OpenAI_Completion
+    ' Check if the other required libraries and references are available
+    If Not CheckRequiredLibraries() Then
+        MsgBox "The required libraries are not available. Please make sure the JSONConverter library and Microsoft XML, v6.0 reference are properly installed.", vbCritical, "Libraries Not Available"
+        Exit Sub
+    End If
+
+    ' Run the OpenAI_Completion macro
+    OpenAI_Completion
 End Sub
+
 
 ' Check if the required libraries and references are available
 Function CheckRequiredLibraries() As Boolean
@@ -577,20 +569,8 @@ Next ref
 CheckXMLReference = False
 End Function
 
-' Main subroutine to check the availability of required libraries and run the OpenAI_Completion macro
-Sub RunOpenAI_Completion()
-' Check if the required libraries and references are available
-If Not CheckRequiredLibraries() Then
-MsgBox "The required libraries are not available. Please make sure the JSONConverter library and Microsoft XML, v6.0 reference are properly installed.", vbCritical, "Libraries Not Available"
-Exit Sub
-End If
-
-' Run the OpenAI_Completion macro
-OpenAI_Completion
-End Sub
-
-' Run the RunOpenAI_Completion subroutine when the workbook opens
+' Run the InitializeMacro and RunOpenAI_Completion subroutines when the workbook opens
 Private Sub Workbook_Open()
-RunOpenAI_Completion
+    InitializeMacro
+    RunOpenAI_Completion
 End Sub
-
