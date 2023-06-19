@@ -15,10 +15,6 @@ Const MACRO_SHORTCUT As String = "^+O" ' Ctrl+Shift+O
 ' API Keys sheet name
 Const API_KEYS_SHEET As String = "API Keys"
 
-Private Sub CommandButton1_Click()
-    OpenAI_Completion
-End Sub
-
 Sub OpenAI_Completion()
     #If Mac Then
         MsgBox "This macro only works on Windows. It is not compatible with macOS.", vbOKOnly, "Windows Compatibility Only"
@@ -96,6 +92,13 @@ Sub OpenAI_Completion()
     ' Check if prompt is empty
     If Trim(prompt) = "" Then
         MsgBox "Please enter some text in the selected cells before executing the macro.", vbCritical, "Empty Input"
+        Application.ScreenUpdating = True
+        Exit Sub
+    End If
+
+    ' Check input length
+    If Len(prompt) > MAX_TOKENS Then
+        MsgBox "Input exceeds the maximum token limit. Please reduce the length of the input.", vbCritical, "Input Too Long"
         Application.ScreenUpdating = True
         Exit Sub
     End If
@@ -198,33 +201,44 @@ Application.StatusBar = False
 Application.ScreenUpdating = True
 
 Exit Sub
+' Improved error handler
 ErrorHandler:
-    MsgBox "Error " & Err.number & ": " & Err.Description & vbCrLf & "Line: " & Erl, vbCritical, "Error in OpenAI_Completion subroutine"
+    MsgBox "Error " & Err.number & ": " & Err.Description & vbCrLf & "Procedure: " & Err.Source & vbCrLf & "Line: " & Erl, vbCritical, "Error in OpenAI_Completion subroutine"
     Application.StatusBar = False
     Application.ScreenUpdating = True
 End Sub
 
 ' Function to detect the input modality (text, image, audio)
 Function DetectInputModality() As String
-' Implement the logic to detect the input modality based on the content provided by the user
-' You can use techniques such as file extension checking, image analysis, or audio analysis
-' Return the detected input modality ("text", "image", "audio")
-' Example implementation for detecting text input:
-DetectInputModality = "text"
+    ' Implement the logic to detect the input modality based on the content provided by the user
+    ' You can use techniques such as file extension checking, image analysis, or audio analysis
+    ' Return the detected input modality ("text", "image", "audio")
+    
+    ' Example implementation for detecting text input:
+    DetectInputModality = "text"
 End Function
 
+Sub TestDetectInputModality()
+    ' Call the DetectInputModality function and store the result in a variable
+    Dim inputModality As String
+    inputModality = DetectInputModality()
+    
+    ' Display the detected input modality
+    MsgBox "Detected Input Modality: " & inputModality
+End Sub
+
 ' Function to generate the multimodal prompt based on the detected input modality
-Function GenerateMultimodalPrompt(ByVal prompt As String, ByVal inputModality As String) As String
+'Function GenerateMultimodalPrompt(ByVal prompt As String, ByVal inputModality As String) As String
 ' Implement the logic to generate the multimodal prompt
 ' Include the relevant text, image text, and audio text in the prompt based on the detected input modality
 ' Return the constructed multimodal prompt
 
 ' Example implementation for text input:
-GenerateMultimodalPrompt = prompt
-End Function
+'GenerateMultimodalPrompt = prompt
+'End Function
 
 ' Function to call the OpenAI API with the multimodal prompt
-Function CallOpenAIAPI(ByVal multimodalPrompt As String) As String
+'Function CallOpenAIAPI(ByVal multimodalPrompt As String) As String
 ' Modify the OpenAI API request payload to include the multimodal prompt
 ' Call the OpenAI API with the modified payload and retrieve the completion response
 ' Parse the API response and extract the completion text
@@ -240,52 +254,53 @@ Function CallOpenAIAPI(ByVal multimodalPrompt As String) As String
 ' Dim completionText As String
 ' completionText = "Sample completion text from OpenAI API"
 ' CallOpenAIAPI = completionText
-End Function
+'End Function
 
 ' Helper function to check if worksheet exists
 Function WorksheetExists(worksheetName As String) As Boolean
-On Error Resume Next
-WorksheetExists = (Not (Sheets(worksheetName) Is Nothing))
-On Error GoTo 0
+    On Error Resume Next
+    WorksheetExists = (Not (Sheets(worksheetName) Is Nothing))
+    On Error GoTo 0
 End Function
+
 
 ' Helper function to parse the response text
-Function ParseResponse(ByVal response As String) As String
+'Function ParseResponse(ByVal response As String) As String
     ' Use a JSON parsing library to parse the response
     ' Note: This requires adding a reference to the library in your VBA project
-    Dim jsonResponse As Object
-    Set jsonResponse = JsonConverter.ParseJson(response)
+    'Dim jsonResponse As Object
+    'Set jsonResponse = JsonConverter.ParseJson(response)
     
     ' Adjust this line to match the structure of your JSON response
-    ParseResponse = jsonResponse("choices")(1)("text")
-End Function
+    'ParseResponse = jsonResponse("choices")(1)("text")
+'End Function
 
 ' Helper function to clean a JSON string
-Function CleanJSONString(ByVal inputStr As String) As String
-    Dim jsonString As String
-    Dim cleanStr As String
-    Dim char As String
-    Dim i As Long
+'Function CleanJSONString(ByVal inputStr As String) As String
+    'Dim JsonString As String
+    'Dim cleanStr As String
+    'Dim char As String
+    'Dim i As Long
     
     ' Remove any line breaks from the string
-    jsonString = RemoveLineBreaks(inputStr)
+    'JsonString = RemoveLineBreaks(inputStr)
     
     ' Escape reserved characters
-    jsonString = Replace(jsonString, "\", "\\")
-    jsonString = Replace(jsonString, """", "\""")
-    jsonString = Replace(jsonString, "/", "\/")
-    jsonString = Replace(jsonString, vbBack, "\b")
-    jsonString = Replace(jsonString, vbFormFeed, "\f")
-    jsonString = Replace(jsonString, vbTab, "\t")
+    'JsonString = Replace(JsonString, "\", "\\")
+    'JsonString = Replace(JsonString, """", "\""")
+    'JsonString = Replace(JsonString, "/", "\/")
+    'JsonString = Replace(JsonString, vbBack, "\b")
+    'JsonString = Replace(JsonString, vbFormFeed, "\f")
+    'JsonString = Replace(JsonString, vbTab, "\t")
     
     ' Preserve emojis
-    cleanStr = ""
-    For i = 1 To Len(jsonString)
-        char = Mid(jsonString, i, 1)
-        If AscW(char) > 255 Then
-            cleanStr = cleanStr & char
-        End If
-    Next i
+    'cleanStr = ""
+    'For i = 1 To Len(JsonString)
+        'char = Mid(JsonString, i, 1)
+        'If AscW(char) > 255 Then
+            'cleanStr = cleanStr & char
+        'End If
+    'Next i
     
     ' Replace all double quotes with single quotes
     cleanStr = Replace(cleanStr, """", "'")
@@ -378,7 +393,7 @@ apiKey = WorksheetFunction.VLookup("OpenAI", Worksheets(API_KEYS_SHEET).Range("A
 GetAPIKey = apiKey
 End Function
 
-' Helper function to check if the API key is valid
+' Improved API key validation
 Function IsValidAPIKey(ByVal apiKey As String) As Boolean
     ' Basic check for non-empty API key
     If Len(apiKey) <= 0 Then
@@ -387,11 +402,10 @@ Function IsValidAPIKey(ByVal apiKey As String) As Boolean
     End If
 
     ' Add a test request to the OpenAI API to validate the API key
-    ' Note: You'll need to replace the API_ENDPOINT and MODEL constants with the actual values
     Dim httpRequest As Object
     Set httpRequest = CreateObject("MSXML2.XMLHTTP")
     With httpRequest
-        .Open "GET", API_ENDPOINT & "/models/" & MODEL, False
+        .Open "HEAD", API_ENDPOINT & "/models/" & MODEL, False
         .SetRequestHeader "Authorization", "Bearer " & apiKey
         .Send
     End With
@@ -433,16 +447,16 @@ Application.OnKey MACRO_SHORTCUT, "OpenAI_Completion"
 End Sub
 
 ' Escape reserved characters in a JSON string
-Function EscapeReservedCharacters(ByVal jsonString As String) As String
-jsonString = Replace(jsonString, "", "\")
-jsonString = Replace(jsonString, """", """")
-jsonString = Replace(jsonString, "/", "/")
-jsonString = Replace(jsonString, vbTab, "\t")
-jsonString = Replace(jsonString, vbCr, "\r")
-jsonString = Replace(jsonString, vbLf, "\n")
-jsonString = Replace(jsonString, Chr(8), "\b")
-jsonString = Replace(jsonString, Chr(12), "\f")
-EscapeReservedCharacters = jsonString
+Function EscapeReservedCharacters(ByVal JsonString As String) As String
+JsonString = Replace(JsonString, "", "\")
+JsonString = Replace(JsonString, """", """")
+JsonString = Replace(JsonString, "/", "/")
+JsonString = Replace(JsonString, vbTab, "\t")
+JsonString = Replace(JsonString, vbCr, "\r")
+JsonString = Replace(JsonString, vbLf, "\n")
+JsonString = Replace(JsonString, Chr(8), "\b")
+JsonString = Replace(JsonString, Chr(12), "\f")
+EscapeReservedCharacters = JsonString
 End Function
 
 ' Helper function to remove line breaks from a string
